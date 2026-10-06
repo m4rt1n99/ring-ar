@@ -1,94 +1,162 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Ring AR</title>
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
   <style>
-    body { margin: 0; overflow: hidden; }
+    :root {
+      --status-surface: rgba(13, 28, 35, .9);
+      --status-text: #fff;
+      --action: #ffe843;
+      --action-pressed: #f1d62c;
+    }
+    body { margin: 0; overflow: hidden; font-family: system-ui, sans-serif; }
+    #camera-status {
+      position: fixed;
+      z-index: 10000;
+      right: 16px;
+      bottom: max(16px, env(safe-area-inset-bottom));
+      left: 16px;
+      max-width: 440px;
+      margin: 0 auto;
+      padding: 14px 16px;
+      border: 1px solid rgba(255, 255, 255, .24);
+      border-radius: 14px;
+      background: var(--status-surface);
+      color: var(--status-text);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, .24);
+      font-size: 15px;
+      line-height: 1.4;
+      pointer-events: none;
+    }
+    #camera-status[hidden] { display: none; }
+    #retry-camera {
+      display: none;
+      min-height: 44px;
+      margin-top: 12px;
+      padding: 0 16px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--action);
+      color: #111;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+    #retry-camera.visible { display: block; }
+    #retry-camera:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+    #retry-camera:active { background: var(--action-pressed); }
   </style>
   <script>
-    AFRAME.registerComponent('png-sequence', {
+    AFRAME.registerComponent('sprite-sequence', {
       schema: {
-  folder: { type: 'string' },
-  frameCount: { type: 'number' },
-  fps: { type: 'number', default: 24 },
-  width: { type: 'number', default: 200 },
-  height: { type: 'number', default: 150 },
-  scale: { type: 'number', default: 1 }
-},
+        src: { type: 'string' },
+        frameCount: { type: 'number' },
+        columns: { type: 'number', default: 10 },
+        fps: { type: 'number', default: 24 },
+        width: { type: 'number', default: 200 },
+        height: { type: 'number', default: 150 },
+        scale: { type: 'number', default: 1 }
+      },
 
       init: function () {
-        this.frames = [];
-        this.currentFrame = 0;
+        this.active = false;
         this.loaded = false;
+        this.currentFrame = 0;
+        this.lastFrameTime = 0;
+        this.frameDuration = 1000 / this.data.fps;
 
-        // Create an offscreen canvas we draw each frame onto
         this.canvas = document.createElement('canvas');
         this.canvas.width = this.data.width;
         this.canvas.height = this.data.height;
         this.ctx = this.canvas.getContext('2d');
-
-        // Create the three.js texture from that canvas
         this.texture = new THREE.CanvasTexture(this.canvas);
 
-        // Build the plane mesh with a transparent material using this texture
-        const aspect = this.data.width / this.data.height;
-const planeHeight = 0.3 * this.data.scale;
-const planeWidth = planeHeight * aspect;
+        const planeHeight = 0.3 * this.data.scale;
+        const planeWidth = planeHeight * this.data.width / this.data.height;
+        this.mesh = new THREE.Mesh(
+          new THREE.PlaneGeometry(planeWidth, planeHeight),
+          new THREE.MeshBasicMaterial({
+            map: this.texture,
+            transparent: true,
+            side: THREE.DoubleSide,
+            depthWrite: false
+          })
+        );
+        this.el.setObject3D('sprite-sequence-mesh', this.mesh);
 
-        const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
-        const material = new THREE.MeshBasicMaterial({
-  map: this.texture,
-  transparent: true,
-  side: THREE.DoubleSide,
-  depthWrite: false
-});
-        this.mesh = new THREE.Mesh(geometry, material);
-        this.el.setObject3D('png-sequence-mesh', this.mesh);
+        this.target = this.el.closest('[mindar-image-target]');
+        this.onTargetFound = () => {
+          this.active = true;
+          this.loadSheet();
+        };
+        this.onTargetLost = () => { this.active = false; };
+        this.target.addEventListener('targetFound', this.onTargetFound);
+        this.target.addEventListener('targetLost', this.onTargetLost);
+      },
 
-        // Preload all frames
-        let loadedCount = 0;
-        for (let i = 1; i <= this.data.frameCount; i++) {
-          const img = new Image();
-         const frameNum = String(i).padStart(4, '0');
-img.src = `${this.data.folder}/${frameNum}.png`;
-          img.onload = () => {
-            loadedCount++;
-            if (loadedCount === this.data.frameCount) {
-              this.loaded = true;
-            }
-          };
-          this.frames.push(img);
+      loadSheet: function () {
+        if (this.loaded) {
+          this.el.dispatchEvent(new CustomEvent('animationReady', { bubbles: true }));
+          return;
         }
+        if (this.sheet) return;
+        this.sheet = new Image();
+        this.sheet.onload = () => {
+          this.loaded = true;
+          this.drawFrame(0);
+          if (this.active) this.el.dispatchEvent(new CustomEvent('animationReady', { bubbles: true }));
+        };
+        this.sheet.onerror = () => {
+          this.sheet = null;
+          this.el.dispatchEvent(new CustomEvent('animationError', { bubbles: true }));
+        };
+        this.sheet.src = this.data.src;
+      },
 
-        this.lastFrameTime = 0;
-        this.frameDuration = 1000 / this.data.fps;
+      drawFrame: function (index) {
+        const x = (index % this.data.columns) * this.data.width;
+        const y = Math.floor(index / this.data.columns) * this.data.height;
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        this.ctx.drawImage(
+          this.sheet, x, y, this.data.width, this.data.height,
+          0, 0, this.canvas.width, this.canvas.height
+        );
+        this.texture.needsUpdate = true;
       },
 
       tick: function (time) {
-        if (!this.loaded) return;
-        if (time - this.lastFrameTime < this.frameDuration) return;
+        if (!this.active || !this.loaded || time - this.lastFrameTime < this.frameDuration) return;
         this.lastFrameTime = time;
-
-        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-        this.ctx.drawImage(this.frames[this.currentFrame], 0, 0, this.canvas.width, this.canvas.height);
-        this.texture.needsUpdate = true;
-
+        this.drawFrame(this.currentFrame);
         this.currentFrame = (this.currentFrame + 1) % this.data.frameCount;
+      },
+
+      remove: function () {
+        this.target.removeEventListener('targetFound', this.onTargetFound);
+        this.target.removeEventListener('targetLost', this.onTargetLost);
+        this.mesh.geometry.dispose();
+        this.mesh.material.dispose();
+        this.texture.dispose();
       }
     });
   </script>
 </head>
 <body>
+  <div id="camera-status" role="status" aria-live="polite">
+    <span id="camera-message">Starting camera…</span>
+    <button id="retry-camera" type="button" onclick="window.location.reload()">Retry camera</button>
+  </div>
   <a-scene
-    mindar-image="imageTargetSrc: targets.mind; maxTrack: 6;"
+    mindar-image="imageTargetSrc: targets-active.mind; maxTrack: 1; uiLoading: no; uiError: no; uiScanning: no;"
     color-space="sRGB"
     renderer="colorManagement: true, physicallyCorrectLights: true"
     vr-mode-ui="enabled: false"
-    device-orientation-permission-ui="enabled: true"
+    device-orientation-permission-ui="enabled: false"
   >
  <a-camera position="0 0 0" look-controls="enabled: false" camera="near: 0.01"></a-camera>
 
@@ -96,7 +164,7 @@ img.src = `${this.data.folder}/${frameNum}.png`;
 <a-entity mindar-image-target="targetIndex: 0">
   <a-entity
     position="0 0.2 0"
-    png-sequence="folder: anims/bug; frameCount: 43; fps: 24; width: 200; height: 150; scale: 10"
+    sprite-sequence="src: anims/bug.webp; frameCount: 43; fps: 24; width: 200; height: 150; scale: 10"
   ></a-entity>
 </a-entity>
 
@@ -104,7 +172,7 @@ img.src = `${this.data.folder}/${frameNum}.png`;
 <a-entity mindar-image-target="targetIndex: 1">
   <a-entity
     position="0 0.2 0"
-    png-sequence="folder: anims/cat; frameCount: 176; fps: 24; width: 200; height: 150; scale: 10"
+    sprite-sequence="src: anims/cat.webp; frameCount: 176; fps: 24; width: 200; height: 150; scale: 10"
   ></a-entity>
 </a-entity>
 
@@ -112,7 +180,7 @@ img.src = `${this.data.folder}/${frameNum}.png`;
 <a-entity mindar-image-target="targetIndex: 2">
   <a-entity
     position="0 0.2 0"
-    png-sequence="folder: anims/cherry; frameCount: 133; fps: 24; width: 200; height: 150; scale: 9"
+    sprite-sequence="src: anims/cherry.webp; frameCount: 133; fps: 24; width: 200; height: 150; scale: 9"
   ></a-entity>
 </a-entity>
 
@@ -120,7 +188,7 @@ img.src = `${this.data.folder}/${frameNum}.png`;
 <a-entity mindar-image-target="targetIndex: 3">
   <a-entity
     position="0 0.2 0"
-    png-sequence="folder: anims/snail; frameCount: 84; fps: 24; width: 200; height: 150; scale: 10"
+    sprite-sequence="src: anims/snail.webp; frameCount: 84; fps: 24; width: 200; height: 150; scale: 10"
   ></a-entity>
 </a-entity>
 
@@ -128,10 +196,66 @@ img.src = `${this.data.folder}/${frameNum}.png`;
 <a-entity mindar-image-target="targetIndex: 4">
   <a-entity
     position="0 0.2 0"
-    png-sequence="folder: anims/star; frameCount: 72; fps: 24; width: 200; height: 150; scale: 6"
+    sprite-sequence="src: anims/star.webp; frameCount: 72; fps: 24; width: 200; height: 150; scale: 6"
   ></a-entity>
 </a-entity>
 
   </a-scene>
+  <script>
+    const scene = document.querySelector('a-scene');
+    const status = document.getElementById('camera-status');
+    const message = document.getElementById('camera-message');
+    const retry = document.getElementById('retry-camera');
+    const targets = document.querySelectorAll('[mindar-image-target]');
+    let activeTarget = null;
+    let animationTimer = null;
+    let startupTimer = setTimeout(() => {
+      message.textContent = 'Camera is taking too long to start. Check your connection and try again.';
+      retry.classList.add('visible');
+    }, 20000);
+
+    scene.addEventListener('arReady', () => {
+      clearTimeout(startupTimer);
+      retry.classList.remove('visible');
+      message.textContent = 'Point your camera at one of the AR images.';
+    });
+    scene.addEventListener('arError', () => {
+      clearTimeout(startupTimer);
+      message.textContent = 'Camera could not start. Check Chrome camera access and try again.';
+      retry.classList.add('visible');
+    });
+    targets.forEach(target => {
+      target.addEventListener('targetFound', () => {
+        clearTimeout(startupTimer);
+        clearTimeout(animationTimer);
+        activeTarget = target;
+        status.hidden = false;
+        retry.classList.remove('visible');
+        message.textContent = 'Loading animation…';
+        animationTimer = setTimeout(() => {
+          message.textContent = 'Animation is taking too long to load. Check your connection and try again.';
+          retry.classList.add('visible');
+        }, 15000);
+      });
+      target.addEventListener('targetLost', () => {
+        clearTimeout(animationTimer);
+        if (activeTarget === target) activeTarget = null;
+        status.hidden = false;
+        retry.classList.remove('visible');
+        message.textContent = 'Point your camera at one of the AR images.';
+      });
+    });
+    scene.addEventListener('animationReady', event => {
+      if (event.target.closest('[mindar-image-target]') !== activeTarget) return;
+      clearTimeout(animationTimer);
+      status.hidden = true;
+    });
+    scene.addEventListener('animationError', event => {
+      if (event.target.closest('[mindar-image-target]') !== activeTarget) return;
+      clearTimeout(animationTimer);
+      message.textContent = 'Animation could not load. Check your connection and try again.';
+      retry.classList.add('visible');
+    });
+  </script>
 </body>
 </html>

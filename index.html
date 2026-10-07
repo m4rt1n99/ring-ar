@@ -14,6 +14,16 @@
       --action-pressed: #f1d62c;
     }
     body { margin: 0; overflow: hidden; font-family: system-ui, sans-serif; }
+    #ar-viewport {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+    }
+    #ar-viewport > a-scene {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
     #camera-status {
       position: fixed;
       z-index: 10000;
@@ -147,12 +157,14 @@
   </script>
 </head>
 <body>
+  <main id="ar-viewport">
   <div id="camera-status" role="status" aria-live="polite">
     <span id="camera-message">Starting camera…</span>
     <button id="retry-camera" type="button" onclick="window.location.reload()">Retry camera</button>
   </div>
   <a-scene
-    mindar-image="imageTargetSrc: targets-active.mind; maxTrack: 1; uiLoading: no; uiError: no; uiScanning: no;"
+    embedded
+    mindar-image="imageTargetSrc: targets.mind; maxTrack: 1; uiLoading: no; uiError: no; uiScanning: no;"
     color-space="sRGB"
     renderer="colorManagement: true, physicallyCorrectLights: true"
     vr-mode-ui="enabled: false"
@@ -200,7 +212,16 @@
   ></a-entity>
 </a-entity>
 
+<!-- 5: mouse -->
+<a-entity mindar-image-target="targetIndex: 5">
+  <a-entity
+    position="0 0.2 0"
+    sprite-sequence="src: anims/mouse.webp; frameCount: 120; fps: 24; width: 200; height: 150; scale: 10"
+  ></a-entity>
+</a-entity>
+
   </a-scene>
+  </main>
   <script>
     const scene = document.querySelector('a-scene');
     const status = document.getElementById('camera-status');
